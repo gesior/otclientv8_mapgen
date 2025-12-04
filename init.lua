@@ -34,9 +34,9 @@ g_app.setName("OTCv8")
 
 --g_proxy.addProxy('ws://websocket-cf.evotra.online', 0, 0)
 --g_proxy.addProxy('wss://websocket-direct.evotra.online', 0)
---g_proxy.addProxy('ws://websocket-direct.evotra.online', 0)
+g_proxy.addProxy('ws://websocket-direct.evotra.online', 0)
 
-g_proxy.addProxy('arm.skalski.pro', 6501, 0)
+--g_proxy.addProxy('arm.skalski.pro', 6501, 0)
 
 -- print first terminal message
 g_logger.info(os.date("== application started at %b %d %Y %X"))

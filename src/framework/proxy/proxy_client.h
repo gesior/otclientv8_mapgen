@@ -28,6 +28,9 @@ using ProxyPacketPtr = std::shared_ptr<ProxyPacket>;
 class Session;
 using SessionPtr = std::shared_ptr<Session>;
 
+// Clear global proxy state during shutdown
+void clearProxyGlobalState();
+
 class Proxy : public std::enable_shared_from_this<Proxy> {
     static constexpr int CHECK_INTERVAL = 2500; // also timeout for ping
     static constexpr int BUFFER_SIZE = 65535;
