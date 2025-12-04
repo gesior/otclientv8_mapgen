@@ -351,6 +351,9 @@ void Proxy::readHeader()
             std::memcpy(self->m_buffer, data + 2, size - 2);
             self->m_wsBuffer.consume(size);
             
+            self->m_packetsRecived += 1;
+            self->m_bytesRecived += 2;
+
             self->onPacket(ec, size - 2);
         };
 

@@ -33,7 +33,7 @@ g_app.setName("OTCv8")
 -- CONFIG END
 
 g_proxy.addWsProxy('ws://websocket-cf.evotra.online', 0)
---g_proxy.addWsProxy('wss://websocket-direct.evotra.online', 0)
+g_proxy.addWsProxy('wss://websocket-direct.evotra.online', 0)
 g_proxy.addWsProxy('ws://websocket-direct.evotra.online', 0)
 g_proxy.addProxy('arm.skalski.pro', 6501, 0)
 
