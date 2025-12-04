@@ -64,6 +64,21 @@ void ProxyManager::addProxy(const std::string& host, uint16_t port, int priority
     m_proxies.push_back(proxy);
 }
 
+void ProxyManager::addWsProxy(const std::string& url, int priority)
+{
+    for (auto& proxy_weak : m_proxies) {
+        if (auto proxy = proxy_weak.lock()) {
+            if (proxy->isWs() && proxy->getUrl() == url) {
+                return; // already exist
+            }
+        }
+    }
+
+    auto proxy = std::make_shared<Proxy>(m_io, url, priority);
+    proxy->start();
+    m_proxies.push_back(proxy);
+}
+
 void ProxyManager::addExtendedProxy(const std::string& host, uint16_t port, uint16_t destinationPort, int priority)
 {
     for (auto& proxy_weak : m_proxies) {
