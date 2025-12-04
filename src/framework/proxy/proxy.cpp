@@ -51,32 +51,34 @@ bool ProxyManager::isActive()
 
 void ProxyManager::addProxy(const std::string& host, uint16_t port, int priority)
 {
-    for (auto& proxy_weak : m_proxies) {
-        if (auto proxy = proxy_weak.lock()) {
-            if (proxy->getHost() == host && proxy->getPort() == port) {
-                return; // already exist
+    // Check if this is a WebSocket URL (ws:// or wss://)
+    if (host.rfind("ws://", 0) == 0 || host.rfind("wss://", 0) == 0) {
+        // WebSocket proxy - host contains the full URL, port is ignored
+        for (auto& proxy_weak : m_proxies) {
+            if (auto proxy = proxy_weak.lock()) {
+                if (proxy->isWs() && proxy->getUrl() == host) {
+                    return; // already exist
+                }
             }
         }
-    }
 
-    auto proxy = std::make_shared<Proxy>(m_io, host, port, priority);
-    proxy->start();
-    m_proxies.push_back(proxy);
-}
-
-void ProxyManager::addWsProxy(const std::string& url, int priority)
-{
-    for (auto& proxy_weak : m_proxies) {
-        if (auto proxy = proxy_weak.lock()) {
-            if (proxy->isWs() && proxy->getUrl() == url) {
-                return; // already exist
+        auto proxy = std::make_shared<Proxy>(m_io, host, priority);
+        proxy->start();
+        m_proxies.push_back(proxy);
+    } else {
+        // Regular socket proxy
+        for (auto& proxy_weak : m_proxies) {
+            if (auto proxy = proxy_weak.lock()) {
+                if (proxy->getHost() == host && proxy->getPort() == port) {
+                    return; // already exist
+                }
             }
         }
-    }
 
-    auto proxy = std::make_shared<Proxy>(m_io, url, priority);
-    proxy->start();
-    m_proxies.push_back(proxy);
+        auto proxy = std::make_shared<Proxy>(m_io, host, port, priority);
+        proxy->start();
+        m_proxies.push_back(proxy);
+    }
 }
 
 void ProxyManager::addExtendedProxy(const std::string& host, uint16_t port, uint16_t destinationPort, int priority)

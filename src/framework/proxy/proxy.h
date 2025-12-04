@@ -19,7 +19,6 @@ public:
     }
     bool isActive();
     void addProxy(const std::string& host, uint16_t port, int priority);
-    void addWsProxy(const std::string& url, int priority);
     void addExtendedProxy(const std::string& host, uint16_t port, uint16_t destinationPort, int priority);
     void removeProxy(const std::string& host, uint16_t port);
     void removeExtendedProxy(const std::string& host, uint16_t port, uint16_t destinationPort);
