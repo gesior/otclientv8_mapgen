@@ -10,13 +10,6 @@ std::map<uint32_t, std::weak_ptr<Session>> g_sessions;
 std::set<std::shared_ptr<Proxy>> g_proxies;
 uint32_t UID = (std::chrono::high_resolution_clock::now().time_since_epoch().count()) & 0xFFFFFFFF;
 
-// Called during ProxyManager::terminate() to clear global state synchronously
-void clearProxyGlobalState()
-{
-    g_sessions.clear();
-    g_proxies.clear();
-}
-
 void Proxy::start()
 {
 #ifdef PROXY_DEBUG
@@ -521,13 +514,6 @@ void Session::terminate(boost::system::error_code ec)
     std::clog << "[Session " << m_id << "] terminate" << std::endl;
 #endif
 
-    // Clear callbacks synchronously to release Protocol references immediately
-    // This prevents Protocol destruction after app termination
-    // Note: We don't call the disconnect callback during termination to avoid
-    // holding references to Protocol objects that may be destroyed after app shutdown
-    m_recvCallback = nullptr;
-    m_disconnectCallback = nullptr;
-
     auto self(shared_from_this());
     boost::asio::post(m_io, [&, self, ec] {
         g_sessions.erase(m_id);
@@ -536,6 +522,8 @@ void Session::terminate(boost::system::error_code ec)
             m_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ecc);
             m_socket.close(ecc);
             m_timer.cancel(ecc);
+        } else if (m_disconnectCallback) {
+            m_disconnectCallback(ec);
         }
 
         for (auto& proxy : m_proxies) {

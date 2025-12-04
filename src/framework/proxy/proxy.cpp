@@ -1,6 +1,5 @@
 #include <framework/global.h>
 #include "proxy.h"
-#include "proxy_client.h"
 #include <framework/stdext/stdext.h>
 
 ProxyManager g_proxy;
@@ -27,9 +26,6 @@ void ProxyManager::terminate()
         m_io.stop();
     }
     m_thread.join();
-    
-    // Clear global state to prevent objects from being destroyed after app termination
-    clearProxyGlobalState();
 }
 
 void ProxyManager::clear()
