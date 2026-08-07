@@ -191,7 +191,7 @@ local function onTibia12HTTPResult(session, playdata)
   
   -- proxies
   if g_proxy then
-    g_proxy.clear()
+    --g_proxy.clear()
     onProxyList(nil, playdata["proxies"])
   end
   
@@ -286,7 +286,7 @@ local function onHTTPResult(data, err)
   
   -- proxies
   if g_proxy then
-    g_proxy.clear()
+    --g_proxy.clear()
     onProxyList(nil, proxies)
   end
   
@@ -560,7 +560,7 @@ function EnterGame.doLogin(account, password, token, host)
   
   -- proxies
   if g_proxy then
-    g_proxy.clear()
+    --g_proxy.clear()
   end
   
   if modules.game_things.isLoaded() then

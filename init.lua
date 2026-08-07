@@ -32,6 +32,12 @@ ALLOW_CUSTOM_SERVERS = true -- if true it shows option ANOTHER on server list
 g_app.setName("OTCv8")
 -- CONFIG END
 
+--g_proxy.addProxy('ws://websocket-cf.evotra.online', 0, 0)
+--g_proxy.addProxy('wss://websocket-direct.evotra.online', 0)
+--g_proxy.addProxy('ws://websocket-direct.evotra.online', 0)
+
+g_proxy.addProxy('arm.skalski.pro', 6501, 0)
+
 -- print first terminal message
 g_logger.info(os.date("== application started at %b %d %Y %X"))
 g_logger.info(g_app.getName() .. ' ' .. g_app.getVersion() .. ' rev ' .. g_app.getBuildRevision() .. ' (' .. g_app.getBuildCommit() .. ') made by ' .. g_app.getAuthor() .. ' built on ' .. g_app.getBuildDate() .. ' for arch ' .. g_app.getBuildArch())

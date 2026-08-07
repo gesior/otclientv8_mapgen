@@ -18,6 +18,36 @@ void Proxy::start()
     auto self(shared_from_this());
     boost::asio::post(m_io, [&, self] {
         g_proxies.insert(self);
+        if (m_isWs) {
+            std::string url = m_url;
+            if (url.find("ws://") == 0) {
+                url = url.substr(5);
+                m_isWss = false;
+            }
+            else if (url.find("wss://") == 0) {
+                url = url.substr(6);
+                m_isWss = true;
+            }
+
+            auto pos = url.find("/");
+            if (pos != std::string::npos) {
+                m_host = url.substr(0, pos);
+                m_path = url.substr(pos);
+            }
+            else {
+                m_host = url;
+                m_path = "/";
+            }
+
+            pos = m_host.find(":");
+            if (pos != std::string::npos) {
+                m_port = std::stoi(m_host.substr(pos + 1));
+                m_host = m_host.substr(0, pos);
+            }
+            else {
+                m_port = m_isWss ? 443 : 80;
+            }
+        }
         check();
     });
 }
@@ -91,56 +121,149 @@ void Proxy::connect()
     m_sessions = 0;
     m_resolver = boost::asio::ip::tcp::resolver(m_io);
     auto self(shared_from_this());
-    m_resolver.async_resolve(m_host, "http", [self](const boost::system::error_code& ec,
-                                                    boost::asio::ip::tcp::resolver::results_type results) {
-        auto endpoint = boost::asio::ip::tcp::endpoint();
-        if (ec || results.empty()) {
+    m_resolver.async_resolve(m_host, std::to_string(m_port), [self](const boost::system::error_code& ec,
+        boost::asio::ip::tcp::resolver::results_type results) {
+            auto endpoint = boost::asio::ip::tcp::endpoint();
+            if (ec || results.empty()) {
 #ifdef PROXY_DEBUG
-            std::clog << "[Proxy " << self->m_host << "] resolve error: " << ec.message() << std::endl;
+                std::clog << "[Proxy " << self->m_host << "] resolve error: " << ec.message() << std::endl;
 #endif
-            boost::system::error_code ecc;
-            auto address = boost::asio::ip::make_address_v4(self->m_host, ecc);
-            if (ecc) {
-                self->m_state = STATE_NOT_CONNECTED;
-                return;
+                boost::system::error_code ecc;
+                auto address = boost::asio::ip::make_address_v4(self->m_host, ecc);
+                if (ecc) {
+                    self->m_state = STATE_NOT_CONNECTED;
+                    return;
+                }
+                endpoint = boost::asio::ip::tcp::endpoint(address, self->m_port);
             }
-            endpoint = boost::asio::ip::tcp::endpoint(address, self->m_port);
-        } else {
-            endpoint = boost::asio::ip::tcp::endpoint(*results);
-            endpoint.port(self->m_port);
-        }
-        self->m_resolvedIp = endpoint.address().to_string();
-        self->m_socket = boost::asio::ip::tcp::socket(self->m_io);
-        self->m_lastPingSent = std::chrono::high_resolution_clock::now(); // used for async_connect timeout
-        self->m_socket.async_connect(endpoint, [self, endpoint](const boost::system::error_code& ec) {
-            if (ec) {
-                self->m_state = STATE_NOT_CONNECTED;
-                return;
+            else {
+                endpoint = boost::asio::ip::tcp::endpoint(*results);
+                endpoint.port(self->m_port);
             }
-            boost::system::error_code ecc;
-            self->m_socket.set_option(boost::asio::ip::tcp::no_delay(true), ecc);
-            self->m_socket.set_option(boost::asio::socket_base::send_buffer_size(65536), ecc);
-            self->m_socket.set_option(boost::asio::socket_base::receive_buffer_size(65536), ecc);
-            if (ecc) {
+            self->m_resolvedIp = endpoint.address().to_string();
+            
+            if (self->m_isWs) {
+                self->m_wsBuffer.clear();
+                if (self->m_isWss) {
+                    self->m_sslContext = std::make_shared<boost::asio::ssl::context>(boost::asio::ssl::context::tlsv12_client);
+                    auto wss = std::make_shared<boost::beast::websocket::stream<boost::beast::ssl_stream<boost::beast::tcp_stream>>>(self->m_io, *self->m_sslContext);
+                    self->m_wss = wss;
+                    boost::beast::get_lowest_layer(*wss).expires_after(std::chrono::seconds(30));
+                    boost::beast::get_lowest_layer(*wss).async_connect(results, [self, wss](const boost::system::error_code& ec, boost::asio::ip::tcp::resolver::results_type::endpoint_type ep) {
+                        if (self->m_wss != wss) return;
+                        if (ec) {
 #ifdef PROXY_DEBUG
-                std::clog << "[Proxy " << self->m_host << "] connect error: " << ecc.message() << std::endl;
+                            std::clog << "[Proxy " << self->m_host << "] connect error: " << ec.message() << std::endl;
 #endif
+                            self->m_state = STATE_NOT_CONNECTED;
+                            return;
+                        }
+                        wss->next_layer().async_handshake(boost::asio::ssl::stream_base::client, [self, wss](const boost::system::error_code& ec) {
+                            if (self->m_wss != wss) return;
+                            if (ec) {
+#ifdef PROXY_DEBUG
+                                std::clog << "[Proxy " << self->m_host << "] ssl handshake error: " << ec.message() << std::endl;
+#endif
+                                self->m_state = STATE_NOT_CONNECTED;
+                                return;
+                            }
+                            wss->async_handshake(self->m_host, self->m_path, [self, wss](const boost::system::error_code& ec) {
+                                if (self->m_wss != wss) return;
+                                if (ec) {
+#ifdef PROXY_DEBUG
+                                    std::clog << "[Proxy " << self->m_host << "] ws handshake error: " << ec.message() << std::endl;
+#endif
+                                    self->m_state = STATE_NOT_CONNECTED;
+                                    return;
+                                }
+                                wss->binary(true);
+                                boost::beast::get_lowest_layer(*wss).expires_never();
+                                self->m_state = STATE_CONNECTING_WAIT_FOR_PING;
+                                self->readHeader();
+                                self->ping();
+#ifdef PROXY_DEBUG
+                                std::clog << "[Proxy " << self->m_host << "] connected " << std::endl;
+#endif
+                            });
+                        });
+                    });
+                } else {
+                    auto ws = std::make_shared<boost::beast::websocket::stream<boost::beast::tcp_stream>>(self->m_io);
+                    self->m_ws = ws;
+                    boost::beast::get_lowest_layer(*ws).expires_after(std::chrono::seconds(30));
+                    boost::beast::get_lowest_layer(*ws).async_connect(results, [self, ws](const boost::system::error_code& ec, boost::asio::ip::tcp::resolver::results_type::endpoint_type ep) {
+                        if (self->m_ws != ws) return;
+                        if (ec) {
+#ifdef PROXY_DEBUG
+                            std::clog << "[Proxy " << self->m_host << "] connect error: " << ec.message() << std::endl;
+#endif
+                            self->m_state = STATE_NOT_CONNECTED;
+                            return;
+                        }
+                        ws->async_handshake(self->m_host, self->m_path, [self, ws](const boost::system::error_code& ec) {
+                            if (self->m_ws != ws) return;
+                            if (ec) {
+#ifdef PROXY_DEBUG
+                                std::clog << "[Proxy " << self->m_host << "] ws handshake error: " << ec.message() << std::endl;
+#endif
+                                self->m_state = STATE_NOT_CONNECTED;
+                                return;
+                            }
+                            ws->binary(true);
+                            boost::beast::get_lowest_layer(*ws).expires_never();
+                            self->m_state = STATE_CONNECTING_WAIT_FOR_PING;
+                            self->readHeader();
+                            self->ping();
+#ifdef PROXY_DEBUG
+                            std::clog << "[Proxy " << self->m_host << "] connected " << std::endl;
+#endif
+                        });
+                    });
+                }
+                return;
             }
 
-            self->m_state = STATE_CONNECTING_WAIT_FOR_PING;
-            self->readHeader();
-            self->ping();
+            self->m_socket = boost::asio::ip::tcp::socket(self->m_io);
+            self->m_lastPingSent = std::chrono::high_resolution_clock::now(); // used for async_connect timeout
+            self->m_socket.async_connect(endpoint, [self, endpoint](const boost::system::error_code& ec) {
+                if (ec) {
+                    self->m_state = STATE_NOT_CONNECTED;
+                    return;
+                }
+                boost::system::error_code ecc;
+                self->m_socket.set_option(boost::asio::ip::tcp::no_delay(true), ecc);
+                self->m_socket.set_option(boost::asio::socket_base::send_buffer_size(65536), ecc);
+                self->m_socket.set_option(boost::asio::socket_base::receive_buffer_size(65536), ecc);
+                if (ecc) {
 #ifdef PROXY_DEBUG
-            std::clog << "[Proxy " << self->m_host << "] connected " << std::endl;
+                    std::clog << "[Proxy " << self->m_host << "] connect error: " << ecc.message() << std::endl;
 #endif
+                }
+
+                self->m_state = STATE_CONNECTING_WAIT_FOR_PING;
+                self->readHeader();
+                self->ping();
+#ifdef PROXY_DEBUG
+                std::clog << "[Proxy " << self->m_host << "] connected " << std::endl;
+#endif
+            });
         });
-    });
 }
 
 void Proxy::disconnect()
 {
     boost::system::error_code ec;
-    m_socket.close(ec);
+    if (m_isWs) {
+        if (m_isWss && m_wss) {
+            m_wss->close(boost::beast::websocket::close_code::normal, ec);
+            m_wss = nullptr;
+        } else if (m_ws) {
+            m_ws->close(boost::beast::websocket::close_code::normal, ec);
+            m_ws = nullptr;
+        }
+    } else {
+        m_socket.close(ec);
+    }
     m_state = STATE_NOT_CONNECTED;
     m_ping = CHECK_INTERVAL * 2;
 }
@@ -188,6 +311,59 @@ void Proxy::removeSession(uint32_t id)
 
 void Proxy::readHeader()
 {
+    if (m_isWs) {
+        auto self(shared_from_this());
+        auto wss = m_wss;
+        auto ws = m_ws;
+        auto handler = [self, wss, ws](const boost::system::error_code& ec, std::size_t bytes_transferred) {
+            if (self->m_isWss && self->m_wss != wss) return;
+            if (!self->m_isWss && self->m_ws != ws) return;
+
+            if (ec) {
+#ifdef PROXY_DEBUG
+                std::clog << "[Proxy " << self->m_host << "] ws read error " << ec.message() << std::endl;
+#endif
+                return self->disconnect();
+            }
+            
+            // Assume WS message contains [Size:2][Body...]
+            // We need to copy it to m_buffer, skipping the size if necessary, or just handling it.
+            // The existing onPacket expects m_buffer to contain the body (after size).
+            // But wait, onHeader reads size, then onBody reads body.
+            // If we have full message in m_wsBuffer:
+            
+            auto size = self->m_wsBuffer.size();
+            if (size < 2) {
+                self->m_wsBuffer.consume(size);
+                return self->readHeader();
+            }
+            
+            // Copy to m_buffer. 
+            // We assume the message INCLUDES the 2 byte size header.
+            // So we copy from offset 2 to m_buffer.
+            
+            if (size > BUFFER_SIZE + 2) {
+                 self->m_wsBuffer.consume(size);
+                 return self->disconnect();
+            }
+            
+            const uint8_t* data = static_cast<const uint8_t*>(self->m_wsBuffer.data().data());
+            std::memcpy(self->m_buffer, data + 2, size - 2);
+            self->m_wsBuffer.consume(size);
+            
+            self->m_packetsRecived += 1;
+            self->m_bytesRecived += 2;
+
+            self->onPacket(ec, size - 2);
+        };
+
+        if (m_isWss) {
+             if (wss) wss->async_read(m_wsBuffer, handler);
+        } else {
+             if (ws) ws->async_read(m_wsBuffer, handler);
+        }
+        return;
+    }
     boost::asio::async_read(m_socket, boost::asio::buffer(m_buffer, 2), std::bind(&Proxy::onHeader, shared_from_this(), std::placeholders::_1, std::placeholders::_2));
 }
 
@@ -268,7 +444,18 @@ void Proxy::send(const ProxyPacketPtr& packet)
     bool sendNow = m_sendQueue.empty();
     m_sendQueue.push_back(packet);
     if (sendNow) {
-        boost::asio::async_write(m_socket, boost::asio::buffer(packet->data(), packet->size()), std::bind(&Proxy::onSent, shared_from_this(), std::placeholders::_1, std::placeholders::_2));
+        if (m_isWs) {
+            auto wss = m_wss;
+            auto ws = m_ws;
+            auto handler = std::bind(&Proxy::onSent, shared_from_this(), std::placeholders::_1, std::placeholders::_2);
+            if (m_isWss) {
+                if (wss) wss->async_write(boost::asio::buffer(packet->data(), packet->size()), handler);
+            } else {
+                if (ws) ws->async_write(boost::asio::buffer(packet->data(), packet->size()), handler);
+            }
+        } else {
+            boost::asio::async_write(m_socket, boost::asio::buffer(packet->data(), packet->size()), std::bind(&Proxy::onSent, shared_from_this(), std::placeholders::_1, std::placeholders::_2));
+        }
     }
 }
 
@@ -284,8 +471,19 @@ void Proxy::onSent(const boost::system::error_code& ec, std::size_t bytes_transf
     m_bytesSent += bytes_transferred;
     m_sendQueue.pop_front();
     if (!m_sendQueue.empty()) {
-        boost::asio::async_write(m_socket, boost::asio::buffer(m_sendQueue.front()->data(), m_sendQueue.front()->size()),
-                                 std::bind(&Proxy::onSent, shared_from_this(), std::placeholders::_1, std::placeholders::_2));
+        if (m_isWs) {
+            auto wss = m_wss;
+            auto ws = m_ws;
+            auto handler = std::bind(&Proxy::onSent, shared_from_this(), std::placeholders::_1, std::placeholders::_2);
+            if (m_isWss) {
+                if (wss) wss->async_write(boost::asio::buffer(m_sendQueue.front()->data(), m_sendQueue.front()->size()), handler);
+            } else {
+                if (ws) ws->async_write(boost::asio::buffer(m_sendQueue.front()->data(), m_sendQueue.front()->size()), handler);
+            }
+        } else {
+            boost::asio::async_write(m_socket, boost::asio::buffer(m_sendQueue.front()->data(), m_sendQueue.front()->size()),
+                                     std::bind(&Proxy::onSent, shared_from_this(), std::placeholders::_1, std::placeholders::_2));
+        }
     }
 }
 

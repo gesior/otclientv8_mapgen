@@ -17,6 +17,10 @@
 #include <vector>
 #include <random>
 #include <set>
+#include <boost/beast/core.hpp>
+#include <boost/beast/websocket.hpp>
+#include <boost/beast/ssl.hpp>
+#include <boost/asio/ssl.hpp>
 
 using ProxyPacket = std::vector<uint8_t>;
 using ProxyPacketPtr = std::shared_ptr<ProxyPacket>;
@@ -52,6 +56,15 @@ public:
         m_destinationPort = destinationPort;
     }
 
+    Proxy(boost::asio::io_context& io, const std::string& url, int priority)
+        : m_io(io), m_timer(io), m_socket(io), m_resolver(io), m_state(STATE_NOT_CONNECTED)
+    {
+        m_url = url;
+        m_priority = priority;
+        m_destinationPort = 0;
+        m_isWs = true;
+    }
+
     // thread-safe
     void start();
     void terminate();
@@ -66,6 +79,8 @@ public:
     bool hasDestinationPort() { return m_destinationPort != 0; }
     std::string getDebugInfo();
     bool isActive() { return m_sessions > 0; }
+    std::string getUrl() { return m_url; }
+    bool isWs() { return m_isWs; }
 
     // not thread-safe
     void addSession(uint32_t id, int m_port);
@@ -90,6 +105,15 @@ private:
     boost::asio::steady_timer m_timer;
     boost::asio::ip::tcp::socket m_socket;
     boost::asio::ip::tcp::resolver m_resolver;
+
+    std::shared_ptr<boost::beast::websocket::stream<boost::beast::tcp_stream>> m_ws;
+    std::shared_ptr<boost::beast::websocket::stream<boost::beast::ssl_stream<boost::beast::tcp_stream>>> m_wss;
+    std::shared_ptr<boost::asio::ssl::context> m_sslContext;
+    boost::beast::flat_buffer m_wsBuffer;
+    bool m_isWs = false;
+    bool m_isWss = false;
+    std::string m_url;
+    std::string m_path;
 
     ProxyState m_state;
 
