@@ -37,8 +37,8 @@ class Connection : public LuaObject
     static constexpr int32_t WRITE_TIMEOUT = 30;
 
     enum {
-        SEND_BUFFER_SIZE = 327680,
-        RECV_BUFFER_SIZE = 327680
+        SEND_BUFFER_SIZE = 512 * 1024,
+        RECV_BUFFER_SIZE = 512 * 1024
     };
 
 public:

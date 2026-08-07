@@ -26,7 +26,7 @@ using SessionPtr = std::shared_ptr<Session>;
 
 class Proxy : public std::enable_shared_from_this<Proxy> {
     static constexpr int CHECK_INTERVAL = 2500; // also timeout for ping
-    static constexpr int BUFFER_SIZE = 65535;
+    static constexpr int BUFFER_SIZE = 512 * 1024;
     enum ProxyState {
         STATE_NOT_CONNECTED,
         STATE_CONNECTING,
@@ -120,7 +120,7 @@ using ProxyPtr = std::shared_ptr<Proxy>;
 
 class Session : public std::enable_shared_from_this<Session> {
     static constexpr int CHECK_INTERVAL = 500;
-    static constexpr int BUFFER_SIZE = 65535;
+    static constexpr int BUFFER_SIZE = 512 * 1024;
     static constexpr int TIMEOUT = 30000;
 public:
     Session(boost::asio::io_context& io, boost::asio::ip::tcp::socket socket, int port)

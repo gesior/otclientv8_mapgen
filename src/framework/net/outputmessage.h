@@ -31,7 +31,7 @@ class OutputMessage : public LuaObject
 {
 public:
     enum {
-        BUFFER_MAXSIZE = 327680,
+        BUFFER_MAXSIZE = 512 * 1024,
         MAX_STRING_LENGTH = 65536,
         MAX_HEADER_SIZE = 12
     };
